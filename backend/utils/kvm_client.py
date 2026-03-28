@@ -17,8 +17,9 @@ DEFAULT_HEADERS = {
     "Connection": "keep-alive",
 }
 
-MIN_IMAGE_BYTES = 10_000
-STATUS_POLL_TIMEOUT = 10
+MIN_IMAGE_BYTES = 5_000
+STATUS_POLL_TIMEOUT = 60
+CONNECTION_CHECK_TIMEOUT = 60
 SNAPSHOT_RETRIES = 3
 
 
@@ -69,14 +70,14 @@ def _is_black_image(data: bytes, threshold: float = 5.0) -> bool:
 
 
 def _ensure_connected_and_ready(session: requests.Session, base_url: str) -> bool:
-    r = _post(session, f"{base_url}/connect", timeout=10)
+    r = _post(session, f"{base_url}/connect", timeout=CONNECTION_CHECK_TIMEOUT)
     if not r or r.status_code != 200:
         logger.error("connect failed for %s", base_url)
         return False
 
     start = time.time()
     while time.time() - start < STATUS_POLL_TIMEOUT:
-        r = _get(session, f"{base_url}/status", timeout=5)
+        r = _get(session, f"{base_url}/status", timeout=15)
         if r and r.status_code == 200:
             try:
                 status = r.json()
@@ -88,7 +89,7 @@ def _ensure_connected_and_ready(session: requests.Session, base_url: str) -> boo
         time.sleep(0.5)
 
     logger.warning("videoReady timeout for %s", base_url)
-    _post(session, f"{base_url}/disconnect", timeout=5)
+    _post(session, f"{base_url}/disconnect", timeout=15)
     return False
 
 
@@ -96,7 +97,7 @@ def _wake_screen(session: requests.Session, base_url: str, monitor_key: str | No
     params = {"xCoordinate": 5, "yCoordinate": 5}
     if monitor_key:
         params["monitorKey"] = monitor_key
-    _post(session, f"{base_url}/sendmouse", params=params, timeout=5)
+    _post(session, f"{base_url}/sendmouse", params=params, timeout=30)
     time.sleep(0.5)
 
 
@@ -129,7 +130,7 @@ def fetch_snapshot_bytes(source: dict, monitor_key: str | None = None) -> bytes 
         for attempt in range(1, SNAPSHOT_RETRIES + 1):
             logger.info("Snapshot attempt %d/%d for %s", attempt, SNAPSHOT_RETRIES, base_url)
 
-            r = _get(session, snapshot_url, params=snapshot_params, timeout=30, stream=True)
+            r = _get(session, snapshot_url, params=snapshot_params, timeout=CONNECTION_CHECK_TIMEOUT, stream=True)
             if not r or r.status_code != 200:
                 logger.warning("Snapshot request failed (attempt %d)", attempt)
                 continue
@@ -157,7 +158,7 @@ def fetch_snapshot_bytes(source: dict, monitor_key: str | None = None) -> bytes 
 
             if _is_black_image(content):
                 logger.warning("Black image (attempt %d), retrying", attempt)
-                time.sleep(0.5)
+                time.sleep(1.5)
                 continue
 
             logger.info("Valid snapshot from %s (%d bytes)", base_url, len(content))
@@ -173,7 +174,7 @@ def fetch_snapshot_bytes(source: dict, monitor_key: str | None = None) -> bytes 
 # kept for llm_client.py compatibility
 def request_with_log(method: str, url: str, **kwargs) -> requests.Response | None:
     try:
-        timeout = kwargs.pop("timeout", 20)
+        timeout = kwargs.pop("timeout", 60)
         logger.info("External Req: %s %s (timeout=%s)", method, url, timeout)
         r = requests.request(method, url, timeout=timeout, **kwargs)
         logger.info("External Res: %s %s → %s", method, url, r.status_code)

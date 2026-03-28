@@ -19,11 +19,8 @@ from cores.config import (
     DB_HTTP,
     DB_NAME,
     DB_PORT,
-    DEFAULT_IMAGE_PROMPT,
     LLM_BASEAPI,
     LLM_MODEL,
-    MARKDOWN_TO_JSON_PROMPT,  
-    EXTRACT_FROM_SCHEMA_PROMPT,
     POLL_INTERVAL,
 )
 from cores.dbconnection.mongo import get_db
@@ -52,12 +49,6 @@ class ConfigRead(BaseModel):
     # Pipeline
     poll_interval: int = 300
 
-    # Prompts
-    default_image_prompt: str = ""
-    markdown_to_json_prompt: str = ""
-    image_to_json_prompt: str = ""
-    extract_from_schema_prompt: str = ""
-
 
 class ConfigUpdate(BaseModel):
     """Schema nhận từ client khi cập nhật."""
@@ -70,12 +61,6 @@ class ConfigUpdate(BaseModel):
     # Pipeline
     poll_interval: int | None = Field(default=None, ge=5, le=86400)
 
-    # Prompts
-    default_image_prompt: str | None = None
-    markdown_to_json_prompt: str | None = None
-    image_to_json_prompt: str | None = None
-    extract_from_schema_prompt: str | None = None
-
 
 # ---- Default từ .env / config.py ----
 def _env_defaults() -> dict[str, Any]:
@@ -87,9 +72,6 @@ def _env_defaults() -> dict[str, Any]:
         "llm_model": LLM_MODEL,
         "api_key": API_KEY,
         "poll_interval": POLL_INTERVAL,
-        "default_image_prompt": DEFAULT_IMAGE_PROMPT,
-        "markdown_to_json_prompt": MARKDOWN_TO_JSON_PROMPT,
-        "extract_from_schema_prompt": EXTRACT_FROM_SCHEMA_PROMPT,
     }
 
 

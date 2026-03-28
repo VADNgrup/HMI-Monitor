@@ -42,17 +42,40 @@ async def startup_event():
     if db.kvm_sources.count_documents({}) == 0:
         create_source(
             db,
-            {
-                "name": "default-kvm",
-                "host": "10.128.0.4",
-                "port": 9081,
-                "base_path": "kx",
-                "poll_seconds": POLL_INTERVAL,
-                "enabled": False,
-                "monitor_keys": ["default"],
-                "headers": {},
-                "similarity_threshold": 0.92,
-            },
+                [{
+                    "name": "default-kvm",
+                    "host": "10.128.0.4",
+                    "port": 9081,
+                    "base_path": "kx",
+                    "poll_seconds": POLL_INTERVAL,
+                    "enabled": False,
+                    "monitor_keys": ["default"],
+                    "headers": {},
+                    "similarity_threshold": 0.92,
+                },
+                {
+                    "name": "dense-log",
+                    "host": "10.128.0.4",
+                    "port": 9082,
+                    "base_path": "kx",
+                    "poll_seconds": POLL_INTERVAL,
+                    "enabled": False,
+                    "monitor_keys": ["default"],
+                    "headers": {},
+                    "similarity_threshold": 0.92,
+                },
+                {
+                    "name": "hmi",
+                    "host": "10.128.0.4",
+                    "port": 9083,
+                    "base_path": "kx",
+                    "poll_seconds": POLL_INTERVAL,
+                    "enabled": False,
+                    "monitor_keys": ["default"],
+                    "headers": {},
+                    "similarity_threshold": 0.92,
+                },
+            ]
         )
 
     poll_stop.clear()

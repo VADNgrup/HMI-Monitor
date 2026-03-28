@@ -21,7 +21,6 @@ import {
 import {
   KvmSource,
   Screen,
-  Indicator,
   Entity,
   LogEntry,
   QueueStats,
@@ -58,9 +57,10 @@ export default function DashboardPage() {
   const [editingEntityId, setEditingEntityId] = useState<string | null>(null);
   const [entityForm, setEntityForm] = useState({
     main_entity_name: "",
-    type: "display",
-    region: "center_diagram",
-    indicators: [{ label: "", metric: "", value_type: "text" }] as { _id?: string; label: string; metric: string; value_type: string }[]
+    type: "HMI Object",
+    region: "center",
+    indicators: [{ _id: "new", label: "", metric: "", value_type: "text", unit: "" }] as any[],
+    subentities: [{ _id: "new", col: "", row: "", value_type: "text", unit: "" }] as any[]
   });
 
   const [sourceId, setSourceId] = useState("");
@@ -309,9 +309,10 @@ export default function DashboardPage() {
   function openAddEntityModal() {
     setEntityForm({
       main_entity_name: "",
-      type: "display",
-      region: "center_diagram",
-      indicators: [{ _id: Math.random().toString(36).substring(2, 9), label: "", metric: "", value_type: "text" }]
+      type: "HMI Object",
+      region: "center",
+      indicators: [{ _id: Math.random().toString(36).substring(2, 9), label: "", metric: "", value_type: "text", unit: "" }],
+      subentities: [{ _id: Math.random().toString(36).substring(2, 9), col: "", row: "", value_type: "text", unit: "" }]
     });
     setEditingEntityId(null);
     setShowEntityModal(true);
@@ -319,18 +320,38 @@ export default function DashboardPage() {
 
   function openEditEntityModal(ent: Entity) {
     const indsObj = ent.indicators || ent.metrics || {};
-    const inds = Object.keys(indsObj).map((mk) => ({
+    let inds = Object.keys(indsObj).map((mk) => ({
       _id: Math.random().toString(36).substring(2, 9),
-      label: indsObj[mk].indicator_label || "",
+      label: indsObj[mk].indicator_label || indsObj[mk].label || "",
       metric: indsObj[mk].metric || indsObj[mk].metric_key || mk,
-      value_type: indsObj[mk].value_type || "text"
+      value_type: indsObj[mk].value_type || "text",
+      unit: indsObj[mk].unit || ""
     }));
+
+    if (!inds.length && ent.indicators && Array.isArray(ent.indicators)) {
+       inds = ent.indicators.map(ind => ({
+         _id: Math.random().toString(36).substring(2, 9),
+         label: ind.label || "",
+         metric: ind.metric || "",
+         value_type: ind.value_type || "text",
+         unit: ind.unit || ""
+       }));
+    }
+
+    const subs = ent.subentities && Array.isArray(ent.subentities) ? ent.subentities.map(sub => ({
+       _id: Math.random().toString(36).substring(2, 9),
+       col: sub.col || "",
+       row: sub.row || "",
+       value_type: sub.value_type || "text",
+       unit: sub.unit || ""
+    })) : [];
     
     setEntityForm({
-      main_entity_name: ent.display_name || "",
-      type: ent.entity_type || "display",
-      region: ent.region || "center_diagram",
-      indicators: inds.length ? inds : [{ _id: Math.random().toString(36).substring(2, 9), label: "", metric: "", value_type: "text" }]
+      main_entity_name: ent.display_name || ent.main_entity_name || "",
+      type: ent.entity_type || ent.type || "HMI Object",
+      region: ent.region || "center",
+      indicators: inds.length ? inds : [{ _id: Math.random().toString(36).substring(2, 9), label: "", metric: "", value_type: "text", unit: "" }],
+      subentities: subs.length ? subs : [{ _id: Math.random().toString(36).substring(2, 9), col: "", row: "", value_type: "text", unit: "" }]
     });
     setEditingEntityId(ent.id);
     setShowEntityModal(true);
@@ -340,22 +361,30 @@ export default function DashboardPage() {
     if (!screenId) return;
     setStatus("Saving entity...");
     try {
-      const payload = {
+      const payload: any = {
         screen_group_id: screenId,
-        display_name: entityForm.main_entity_name,
-        entity_type: entityForm.type,
+        main_entity_name: entityForm.main_entity_name,
+        type: entityForm.type,
         region: entityForm.region,
-        metrics: entityForm.indicators.reduce((acc: any, ind) => {
-          if (ind.metric || ind.label) {
-            acc[ind.metric || ind.label] = {
-              indicator_label: ind.label,
-              metric_key: ind.metric,
-              value_type: ind.value_type
-            };
-          }
-          return acc;
-        }, {})
       };
+
+      if (entityForm.type.toLowerCase() === "table") {
+        payload.subentities = entityForm.subentities.map((sub: any) => ({
+          col: sub.col,
+          row: sub.row,
+          value_type: sub.value_type,
+          unit: sub.unit
+        }));
+      } else if (entityForm.type.toLowerCase() === "log/alert" || entityForm.type.toLowerCase() === "log") {
+        // Log doesn't need indicators/subentities
+      } else {
+        payload.indicators = entityForm.indicators.map((ind: any) => ({
+          label: ind.label,
+          metric: ind.metric,
+          value_type: ind.value_type,
+          unit: ind.unit
+        }));
+      }
 
       if (editingEntityId) {
         await putJSON(base, `/api/entities/${editingEntityId}`, payload);
@@ -375,7 +404,7 @@ export default function DashboardPage() {
     if (!confirm("Are you sure you want to delete this entity?")) return;
     setStatus("Deleting entity...");
     try {
-      await deleteFetch(base, `/api/entities/${id}`);
+      await deleteFetch(base, `/api/entities/${id}?screen_group_id=${screenId}`);
       await loadEntities(screenId);
       setStatus("Entity deleted.");
     } catch (err: any) {
@@ -395,7 +424,10 @@ export default function DashboardPage() {
 
     setStatus(`Deleting ${selectedEntityIds.length} entities...`);
     try {
-      await postJSON(base, "/api/entities/batch-delete", { entity_ids: selectedEntityIds });
+      await postJSON(base, "/api/entities/batch-delete", { 
+        entity_ids: selectedEntityIds,
+        screen_group_id: screenId
+      });
       setSelectedEntityIds([]);
       await loadEntities(screenId);
       setStatus("Selected entities deleted.");
@@ -487,21 +519,33 @@ export default function DashboardPage() {
   // ---- Snapshot image URL helper ----
   function snapshotImgUrl(imageUrl: string | undefined): string | null {
     if (!imageUrl) return null;
+    if (imageUrl.startsWith("data:")) return imageUrl;
     return `${base}${imageUrl}`;
   }
 
   return (
     <main className="page">
-      <section className="hero">
-        <h1>KVM OCR Monitoring Dashboard</h1>
-        <p>
-          Monitor KVM screens, entities, indicators, and timeseries from the OCR
-          + LLM pipeline.
-        </p>
+      <section className="hero" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <h1>KVM OCR Monitoring Dashboard</h1>
+          <p>
+            Monitor KVM screens, entities, indicators, and timeseries from the OCR
+            + LLM pipeline.
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: "10px" }}>
+          <Link href="/snapshots" className="btn-primary" style={{ padding: "8px 16px", textDecoration: "none", borderRadius: "4px" }}>
+            Check Snapshots
+          </Link>
+          <Link href="/settings" className="btn-secondary" style={{ padding: "8px 16px", textDecoration: "none", borderRadius: "4px" }}>
+            Settings
+          </Link>
+        </div>
       </section>
 
       {/* ======== Source Controls + Queue ======== */}
       <div className="row-2col">
+        
         <section className="card">
           <h2>KVM Source Controls</h2>
           {sources.length ? (
@@ -552,132 +596,127 @@ export default function DashboardPage() {
           )}
         </section>
 
-        <section className="card">
-          <div className="section-header">
-            <h2>Pipeline Queue</h2>
-            <Link
-              href="/queue-details"
-              className="btn-sm btn-link"
-              style={{ fontSize: 11 }}
-            >
-              View Details &rarr;
-            </Link>
-          </div>
-          <div className="queue-stats">
-            <div className="queue-stat">
-              <span className="queue-count q-pending">
-                {queueStats.pending}
-              </span>
-              <span className="queue-label">Pending</span>
-            </div>
-            <div className="queue-stat">
-              <span className="queue-count q-processing">
-                {queueStats.processing}
-              </span>
-              <span className="queue-label">Processing</span>
-            </div>
-            <div className="queue-stat">
-              <span className="queue-count q-completed">
-                {queueStats.completed}
-              </span>
-              <span className="queue-label">Completed</span>
-            </div>
-            <div className="queue-stat">
-              <span
-                className={`queue-count q-failed ${queueStats.failed > 0 ? "text-error" : ""}`}
+        <div className="2row-1col">
+          <section className="card">
+            <div className="section-header">
+              <h2>Pipeline Queue</h2>
+              <Link
+                href="/queue-details"
+                className="btn-sm btn-link"
+                style={{ fontSize: 11 }}
               >
-                {queueStats.failed}
-              </span>
-              <span className="queue-label">Failed</span>
+                View Details &rarr;
+              </Link>
             </div>
-          </div>
-        </section>
+            <div className="queue-stats">
+              <div className="queue-stat">
+                <span className="queue-count q-pending">
+                  {queueStats.pending}
+                </span>
+                <span className="queue-label">Pending</span>
+              </div>
+              <div className="queue-stat">
+                <span className="queue-count q-processing">
+                  {queueStats.processing}
+                </span>
+                <span className="queue-label">Processing</span>
+              </div>
+              <div className="queue-stat">
+                <span className="queue-count q-completed">
+                  {queueStats.completed}
+                </span>
+                <span className="queue-label">Completed</span>
+              </div>
+              <div className="queue-stat">
+                <span
+                  className={`queue-count q-failed ${queueStats.failed > 0 ? "text-error" : ""}`}
+                >
+                  {queueStats.failed}
+                </span>
+                <span className="queue-label">Failed</span>
+              </div>
+            </div>    
+          </section>
+          {/* ======== Controls ======== */}
+          <section className="card controls">
+            <div className="control-row backend-row">
+              <label>
+                Backend URL
+                <input
+                  value={backendUrl}
+                  onChange={(e) => setBackendUrl(e.target.value)}
+                  placeholder="http://localhost:8000"
+                />
+              </label>
+              <button onClick={onApplyBackend} disabled={loading}>
+                Apply
+              </button>
+            </div>
+            <div className="control-grid">
+              <label>
+                KVM Source
+                <select
+                  value={sourceId}
+                  onChange={(e) => onSourceChange(e.target.value)}
+                  disabled={loading || !sources.length}
+                >
+                  {sources.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Screen Group
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <select
+                    value={screenId}
+                    onChange={(e) => onScreenChange(e.target.value)}
+                    disabled={loading || !screens.length}
+                    style={{ flex: 1 }}
+                  >
+                    {screens.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} {s.ignored ? "(Ignored)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {screenId && (
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "12px", cursor: "pointer", whiteSpace: "nowrap" }}>
+                      <input
+                        type="checkbox"
+                        checked={!!screens.find(s => s.id === screenId)?.ignored}
+                        onChange={(e) => toggleScreenIgnore(screenId, e.target.checked)}
+                      />
+                      Skip OCR
+                    </label>
+                  )}
+                </div>
+              </label>
+              <label>
+                Hours
+                <input
+                  type="number"
+                  min={1}
+                  max={168}
+                  value={hours}
+                  onChange={(e) =>
+                    setHours(
+                      Math.max(1, Math.min(168, Number(e.target.value) || 24)),
+                    )
+                  }
+                />
+              </label>
+              <button onClick={onRefreshData} disabled={loading || !screenId}>
+                {loading ? "Loading..." : "Refresh"}
+              </button>
+            </div>
+          </section>
+        </div>
       </div>
 
-      {/* ======== Controls ======== */}
-      <section className="card controls">
-        <div className="control-row backend-row">
-          <label>
-            Backend URL
-            <input
-              value={backendUrl}
-              onChange={(e) => setBackendUrl(e.target.value)}
-              placeholder="http://localhost:8000"
-            />
-          </label>
-          <button onClick={onApplyBackend} disabled={loading}>
-            Apply
-          </button>
-        </div>
-        <div className="control-grid">
-          <label>
-            KVM Source
-            <select
-              value={sourceId}
-              onChange={(e) => onSourceChange(e.target.value)}
-              disabled={loading || !sources.length}
-            >
-              {sources.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Screen Group
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <select
-                value={screenId}
-                onChange={(e) => onScreenChange(e.target.value)}
-                disabled={loading || !screens.length}
-                style={{ flex: 1 }}
-              >
-                {screens.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} {s.ignored ? "(Ignored)" : ""}
-                  </option>
-                ))}
-              </select>
-              {screenId && (
-                <label style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "12px", cursor: "pointer", whiteSpace: "nowrap" }}>
-                  <input
-                    type="checkbox"
-                    checked={!!screens.find(s => s.id === screenId)?.ignored}
-                    onChange={(e) => toggleScreenIgnore(screenId, e.target.checked)}
-                  />
-                  Skip OCR
-                </label>
-              )}
-            </div>
-          </label>
-          <label>
-            Hours
-            <input
-              type="number"
-              min={1}
-              max={168}
-              value={hours}
-              onChange={(e) =>
-                setHours(
-                  Math.max(1, Math.min(168, Number(e.target.value) || 24)),
-                )
-              }
-            />
-          </label>
-          <button onClick={onRefreshData} disabled={loading || !screenId}>
-            {loading ? "Loading..." : "Refresh"}
-          </button>
-        </div>
-      </section>
 
-      {/* ======== Status ======== */}
-      <section className="card status-card">
-        <div>
-          <strong>Status:</strong> {status}
-        </div>
-        {error ? <p className="error">{error}</p> : null}
-      </section>
 
       {/* ======== Scene Preview + Entities ======== */}
       <div className="row-2col row-2col-stretch">
@@ -817,48 +856,131 @@ export default function DashboardPage() {
                         </button>
                       </div>
                       <div className="entity-metrics">
-                        {indicatorKeys.map((mk) => {
-                          const m = indicatorsObj[mk];
-                          const indicatorName =
-                            m.indicator_label || m.display_name || mk;
-                          return (
-                            <span
-                              key={mk}
-                              className="metric-badge"
-                              style={{
-                                borderColor: typeColor(m.value_type),
-                              }}
-                            >
-                              <span className="metric-name">
-                                {indicatorName}
-                              </span>
+                        {ent.entity_type?.toLowerCase() === "table" ? (
+                          <div style={{width: "100%", overflowX: "auto", marginTop: "1rem"}}>
+                            {(() => {
+                              const hasSubentities = ent.subentities && ent.subentities.length > 0;
+                              let cols: string[] = [];
+                              let rows: string[] = [];
+                              const valueMap: Record<string, Record<string, any>> = {};
+
+                              if (hasSubentities && ent.subentities) {
+                                const colSet = new Set<string>();
+                                const rowSet = new Set<string>();
+                                ent.subentities.forEach((sub: any) => {
+                                  if (sub.col) colSet.add(sub.col);
+                                  if (sub.row) rowSet.add(sub.row);
+                                });
+                                cols = Array.from(colSet);
+                                rows = Array.from(rowSet);
+
+                                ent.subentities.forEach((sub: any) => {
+                                  if (!valueMap[sub.row]) valueMap[sub.row] = {};
+                                  valueMap[sub.row][sub.col] = sub;
+                                });
+                              }
+
+                              return hasSubentities ? (
+                                <table style={{width: "100%", borderCollapse: "collapse", fontSize: "0.85rem", textAlign: "center"}}>
+                                  <thead>
+                                    <tr>
+                                      <th style={{borderBottom: "1px solid #ccc", padding: "4px", borderRight: "1px solid #ccc"}}></th>
+                                      {cols.map(c => (
+                                        <th key={c} style={{borderBottom: "1px solid #ccc", padding: "4px"}}>{c}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {rows.map(r => (
+                                      <tr key={r}>
+                                        <td style={{borderBottom: "1px solid #eee", padding: "4px", borderRight: "1px solid #eee", fontWeight: "bold", textAlign: "left"}}>{r}</td>
+                                        {cols.map(c => {
+                                          const sub = valueMap[r]?.[c];
+                                          if (!sub) return <td key={c} style={{borderBottom: "1px solid #eee", padding: "4px"}}>-</td>;
+                                          return (
+                                            <td key={c} style={{borderBottom: "1px solid #eee", padding: "4px", color: typeColor(sub.value_type)}}>
+                                              {sub.value_raw ?? "-"} {sub.unit || ""}
+                                            </td>
+                                          );
+                                        })}
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              ) : (
+                                <table style={{width: "100%", borderCollapse: "collapse", fontSize: "0.85rem"}}>
+                                  <thead>
+                                    <tr>
+                                      <th style={{borderBottom: "1px solid #ccc", textAlign: "left", padding: "4px"}}>Col</th>
+                                      <th style={{borderBottom: "1px solid #ccc", textAlign: "left", padding: "4px"}}>Row</th>
+                                      <th style={{borderBottom: "1px solid #ccc", textAlign: "left", padding: "4px"}}>Value</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {indicatorKeys.map((mk) => {
+                                      const m = indicatorsObj[mk];
+                                      const indicatorName = m.indicator_label || m.display_name || mk;
+                                      return (
+                                        <tr key={mk}>
+                                          <td style={{borderBottom: "1px solid #eee", padding: "4px"}}>{indicatorName}</td>
+                                          <td style={{borderBottom: "1px solid #eee", padding: "4px"}}>-</td>
+                                          <td style={{borderBottom: "1px solid #eee", padding: "4px", color: typeColor(m.value_type)}}>
+                                            {m.last_value || "-"} {m.unit || ""}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              );
+                            })()}
+                          </div>
+                        ) : ent.entity_type?.toLowerCase() === "log/alert" || ent.entity_type?.toLowerCase() === "log" ? (
+                          <div style={{width: "100%", marginTop: "1rem", display: "flex", flexDirection: "column", gap: "4px"}}>
+                            {ent.logs && ent.logs.length > 0 ? ent.logs.map((lg, idx) => (
+                              <div key={idx} style={{padding: "6px", background: "#fee2e2", borderLeft: "3px solid #ef4444", borderRadius: "4px", fontSize: "0.85rem"}}>
+                                <strong>{lg.time}</strong> - {lg.name}: {lg.desc}
+                              </div>
+                            )) : (
+                              <p className="muted" style={{fontSize: "0.85rem"}}>No logs found.</p>
+                            )}
+                          </div>
+                        ) : (
+                          indicatorKeys.map((mk) => {
+                            const m = indicatorsObj[mk];
+                            const indicatorName =
+                              m.indicator_label || m.display_name || mk;
+                            return (
                               <span
-                                className="metric-val"
+                                key={mk}
+                                className="metric-badge"
                                 style={{
-                                  color: typeColor(m.value_type),
+                                  borderColor: typeColor(m.value_type),
                                 }}
                               >
-                                {m.last_value}
-                                {m.unit ? ` ${m.unit}` : ""}
+                                <span className="metric-name">
+                                  {indicatorName}
+                                </span>
+                                <span
+                                  className="metric-val"
+                                  style={{
+                                    color: typeColor(m.value_type),
+                                  }}
+                                >
+                                  {m.last_value}
+                                  {m.unit ? ` ${m.unit}` : ""}
+                                </span>
+                                <span
+                                  className="metric-type"
+                                  style={{
+                                    background: typeColor(m.value_type),
+                                  }}
+                                >
+                                  {m.value_type}
+                                </span>
                               </span>
-                              <span
-                                className="metric-type"
-                                style={{
-                                  background: typeColor(m.value_type),
-                                }}
-                              >
-                                {m.value_type}
-                              </span>
-                            </span>
-                          );
-                        })}
-                        {!indicatorKeys.length && (
-                          <span
-                            className="muted"
-                            style={{ fontSize: 11 }}
-                          >
-                            No indicators
-                          </span>
+                            );
+                          })
                         )}
                       </div>
                     </div>
@@ -921,7 +1043,7 @@ export default function DashboardPage() {
             }
 
             const entityEntries = Object.entries(entityGroups);
-            const hasData = entityEntries.some(([_, group]) => Object.keys(group.numeric).length > 0 || group.color.length > 0);
+            const hasData = entityEntries.some(([, group]) => Object.keys(group.numeric).length > 0 || group.color.length > 0);
 
             if (!hasData)
               return (

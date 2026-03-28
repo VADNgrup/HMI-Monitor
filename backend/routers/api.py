@@ -1,12 +1,14 @@
 import threading
 from datetime import timedelta
 from pathlib import Path
+from functools import lru_cache
+from uuid import uuid4
 
 from bson import ObjectId
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Body
 from fastapi.responses import FileResponse
 
-from cores.dbconnection.mongo import get_db
+from cores.dbconnection.mongo import get_db, EntitySchema
 from cores.pipeline import (
     backfill_old_data,
     create_source,
@@ -203,15 +205,24 @@ def get_latest_snapshots(source_id: str, limit: int = Query(default=20, ge=1, le
 
 
 @router.delete("/entities/{entity_id}")
-def delete_entity(entity_id: str):
+def delete_entity(entity_id: str, screen_group_id: str = Query(...)):
     db = get_db()
     try:
-        oid = ObjectId(entity_id)
+        oid = ObjectId(screen_group_id)
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid entity id")
-    db.screen_entities.delete_one({"_id": oid})
-    # Also delete logs for this entity
-    db.entity_logs.delete_many({"entity_id": oid})
+        raise HTTPException(status_code=400, detail="Invalid screen_group_id")
+    
+    group = db.screen_groups.find_one({"_id": oid})
+    if not group:
+        raise HTTPException(status_code=404, detail="Screen group not found")
+        
+    schema = group.get("entity_schema", [])
+    new_schema = [e for i, e in enumerate(schema) if (e.get("id") or f"{str(oid)}_ent_{i}") != entity_id]
+
+    db.screen_groups.update_one(
+        {"_id": oid},
+        {"$set": {"entity_schema": new_schema, "updated_at": now_utc()}}
+    )
     return {"ok": True}
 
 
@@ -219,21 +230,31 @@ def delete_entity(entity_id: str):
 def batch_delete_entities(payload: dict = Body(...)):
     db = get_db()
     entity_ids = payload.get("entity_ids", [])
+    screen_group_id = payload.get("screen_group_id")
+    
     if not isinstance(entity_ids, list):
         raise HTTPException(status_code=400, detail="entity_ids must be a list")
-    
-    oids = []
-    for eid in entity_ids:
-        try:
-            oids.append(ObjectId(eid))
-        except Exception:
-            continue
-    if not oids:
-        return {"ok": True, "deleted": 0}
+    if not screen_group_id:
+        raise HTTPException(status_code=400, detail="Missing screen_group_id")
+        
+    try:
+        oid = ObjectId(screen_group_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid screen_group_id")
 
-    res_entities = db.screen_entities.delete_many({"_id": {"$in": oids}})
-    db.entity_logs.delete_many({"entity_id": {"$in": oids}})
-    return {"ok": True, "deleted": res_entities.deleted_count}
+    group = db.screen_groups.find_one({"_id": oid})
+    if not group:
+        raise HTTPException(status_code=404, detail="Screen group not found")
+        
+    schema = group.get("entity_schema", [])
+    original_len = len(schema)
+    new_schema = [e for i, e in enumerate(schema) if (e.get("id") or f"{str(oid)}_ent_{i}") not in entity_ids]
+
+    db.screen_groups.update_one(
+        {"_id": oid},
+        {"$set": {"entity_schema": new_schema, "updated_at": now_utc()}}
+    )
+    return {"ok": True, "deleted": original_len - len(new_schema)}
 
 
 @router.get("/queue")
@@ -252,44 +273,135 @@ def run_backfill():
 
 @router.post("/entities")
 def create_entity(payload: dict = Body(...)):
+    # Now we insert into the group's entity_schema array
     db = get_db()
     group_id = payload.get("screen_group_id")
     if not group_id:
         raise HTTPException(400, "Missing screen_group_id")
-    entity = {
-        "screen_group_id": ObjectId(group_id),
-        "entity_key": payload.get("display_name"),
-        "display_name": payload.get("display_name"),
-        "entity_type": payload.get("entity_type", "sensor"),
-        "region": payload.get("region", "center"),
-        "metrics": payload.get("metrics", {}),
-        "created_at": now_utc(),
-        "updated_at": now_utc(),
-        "last_seen_at": now_utc()
-    }
-    entity["_id"] = crud.insert_one(db, "screen_entities", entity)
-    entity["screen_group_id"] = str(entity["screen_group_id"])
-    return entity
+    try:
+        oid = ObjectId(group_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid screen group id")
+
+    group = db.screen_groups.find_one({"_id": oid})
+    if not group:
+        raise HTTPException(status_code=404, detail="Screen group not found")
+
+    schema = group.get("entity_schema", [])
+    idx = len(schema) + 1
+    
+    # Try parsing via Pydantic model
+    try:
+        payload["id"] = payload.get("id") or f"{group_id}_ent_{uuid4().hex[:6]}"
+        ent = EntitySchema(**payload)
+        new_entity = ent.model_dump(exclude_none=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    schema.append(new_entity)
+
+    db.screen_groups.update_one(
+        {"_id": oid},
+        {"$set": {"entity_schema": schema, "updated_at": now_utc()}}
+    )
+    # mimic response so UI is happy
+    new_entity["_id"] = new_entity["id"]
+    new_entity["screen_group_id"] = group_id
+    return new_entity
+
 
 @router.put("/entities/{entity_id}")
 def update_entity(entity_id: str, payload: dict = Body(...)):
     db = get_db()
-    update_data = {
-        "display_name": payload.get("display_name"),
-        "entity_type": payload.get("entity_type"),
-        "region": payload.get("region", "center"),
-        "metrics": payload.get("metrics", {}),
-        "updated_at": now_utc()
-    }
-    crud.update_by_id(db, "screen_entities", entity_id, update_data)
-    schema = crud.find_by_id(db, "screen_entities", entity_id)
-    schema["_id"] = str(schema["_id"])
-    schema["screen_group_id"] = str(schema["screen_group_id"])
-    return {"ok": True, "entity": schema}
+    group_id = payload.get("screen_group_id")
+    if not group_id:
+        raise HTTPException(400, "Missing screen_group_id")
 
-@router.delete("/entities/{entity_id}")
-def delete_entity(entity_id: str):
+    try:
+        oid = ObjectId(group_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid screen group id")
+
+    group = db.screen_groups.find_one({"_id": oid})
+    if not group:
+        raise HTTPException(status_code=404, detail="Screen group not found")
+
+    schema = group.get("entity_schema", [])
+    updated = None
+
+    for i, e in enumerate(schema):
+        if (e.get("id") or f"{str(oid)}_ent_{i}") == entity_id:
+            try:
+                payload["id"] = entity_id
+                ent = EntitySchema(**payload)
+                updated_e = ent.model_dump(exclude_none=True)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+                
+            schema[i] = updated_e
+            updated = updated_e
+            break
+
+    if not updated:
+        raise HTTPException(status_code=404, detail="Entity not found in schema")
+
+    db.screen_groups.update_one(
+        {"_id": oid},
+        {"$set": {"entity_schema": schema, "updated_at": now_utc()}}
+    )
+
+    res = dict(updated)
+    res["_id"] = res["id"]
+    res["screen_group_id"] = group_id
+    return {"ok": True, "entity": res}
+
+
+@router.get("/snapshots")
+def get_snapshots(
+    source_id: str | None = None,
+    limit: int = Query(default=20, ge=1, le=100),
+    skip: int = Query(default=0, ge=0)
+):
     db = get_db()
-    crud.delete_by_id(db, "screen_entities", entity_id)
-    db.entity_logs.delete_many({"entity_id": ObjectId(entity_id)})
-    return {"ok": True}
+    query = {}
+    if source_id:
+        try:
+            query["source_id"] = ObjectId(source_id)
+        except:
+            pass
+    
+    rows = list(db.snapshots.find(query).sort("created_at", -1).skip(skip).limit(limit))
+    total = db.snapshots.count_documents(query)
+
+    res = []
+    for s in rows:
+        image_url = s.get("image_base64")
+        if not image_url:
+            image_url = f"/api/snapshots/{str(s['_id'])}/image"
+
+        res.append({
+            "id": str(s["_id"]),
+            "source_id": str(s.get("source_id")),
+            "screen_group_id": str(s.get("screen_group_id")),
+            "monitor_key": s.get("monitor_key"),
+            "created_at": s.get("created_at"),
+            "image_url": image_url,
+            "entities_values": s.get("entities_values", []),
+            "llm_parse_error": s.get("llm_parse_error", False),
+            "evaluation": s.get("evaluation", None),
+            "processing_time_ms": s.get("processing_time_ms", None)
+        })
+    return {"total": total, "items": res, "skip": skip, "limit": limit}
+
+
+@router.put("/snapshots/{snapshot_id}/evaluation")
+def update_snapshot_evaluation(snapshot_id: str, payload: dict = Body(...)):
+    db = get_db()
+    try:
+        oid = ObjectId(snapshot_id)
+    except:
+        raise HTTPException(400, "Invalid ID")
+    
+    eval_text = payload.get("evaluation")
+    db.snapshots.update_one({"_id": oid}, {"$set": {"evaluation": eval_text, "updated_at": now_utc()}})
+    return {"ok": True, "evaluation": eval_text}

@@ -10,6 +10,8 @@ Full-stack system for monitoring KVM HMI screens via OCR + LLM extraction pipeli
 KVM-OCR/
 ├── backend/        # FastAPI + MongoDB + LLM pipeline
 └── frontend/       # Next.js 14 dashboard
+|__deploy/   #deploy by docker
+|__prometheus+grafana # if need warning alert
 ```
 
 ---

@@ -4,7 +4,7 @@ from typing import Any
 
 from pymongo.database import Database
 
-from cores.pipeline_service import PipelineService
+from .pipelines import PipelineService
 
 
 _service = PipelineService()

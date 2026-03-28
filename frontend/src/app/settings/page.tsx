@@ -26,26 +26,20 @@ interface FieldMeta {
   rows?: number;
 }
 
-const FIELD_META: FieldMeta[] = [
-  { key: "db_host", label: "Database Host", group: "database", readOnly: true, type: "text" },
-  { key: "db_port", label: "Database Port", group: "database", readOnly: true, type: "number" },
-  { key: "db_name", label: "Database Name", group: "database", readOnly: true, type: "text" },
-  { key: "llm_base_api", label: "LLM Base API URL", group: "llm", type: "text", placeholder: "http://host:port/" },
-  { key: "llm_model", label: "LLM Model", group: "llm", type: "text", placeholder: "e.g. qwen35, gpt-4o-mini" },
-  { key: "api_key", label: "API Key", group: "llm", type: "password", placeholder: "Enter API key" },
-  { key: "poll_interval", label: "Poll Interval (seconds)", group: "pipeline", type: "number", min: 60, max: 86400 },
-  { key: "default_image_prompt", label: "Image → Markdown Prompt", group: "prompts", type: "textarea", rows: 10 },
-  { key: "markdown_to_json_prompt", label: "Markdown → JSON Prompt", group: "prompts", type: "textarea", rows: 10 },
-  // { key: "image_to_json_prompt", label: "Image → JSON Prompt", group: "prompts", type: "textarea", rows: 10 },
-];
-
-const GROUP_LABELS: Record<string, string> = {
+  const FIELD_META: FieldMeta[] = [
+    { key: "db_host", label: "Database Host", group: "database", readOnly: true, type: "text" },
+    { key: "db_port", label: "Database Port", group: "database", readOnly: true, type: "number" },
+    { key: "db_name", label: "Database Name", group: "database", readOnly: true, type: "text" },
+    { key: "llm_base_api", label: "LLM Base API URL", group: "llm", type: "text", placeholder: "http://host:port/" },
+    { key: "llm_model", label: "LLM Model", group: "llm", type: "text", placeholder: "e.g. qwen35, gpt-4o-mini" },
+    { key: "api_key", label: "API Key", group: "llm", type: "password", placeholder: "Enter API key" },
+    { key: "poll_interval", label: "Poll Interval (seconds)", group: "pipeline", type: "number", min: 60, max: 86400 },
+  ];const GROUP_LABELS: Record<string, string> = {
   database: "Database Connection (read-only)",
   llm: "LLM Configuration",
   pipeline: "Pipeline Settings",
-  prompts: "LLM Prompts",
 };
-const GROUPS = ["database", "llm", "pipeline", "prompts"];
+const GROUPS = ["database", "llm", "pipeline"];
 
 interface SourceForm {
   name: string;
