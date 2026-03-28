@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: kvm-ocr-backend
     restart: unless-stopped
-    env_file: .deploy.app.env
+    env_file: .env
     ports:
       - "33030:8000"
     networks:
@@ -19,7 +19,7 @@ services:
         - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL}
     container_name: kvm-ocr-frontend
     restart: unless-stopped
-    env_file: .deploy.app.env
+    env_file: .env
     ports:
       - "33031:3000"
     depends_on:
